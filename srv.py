@@ -1,4 +1,4 @@
-# Autor: Ronald Rabelo
+# Autores: Ronald Santos
 import sys
 import socket
 import random
@@ -16,28 +16,33 @@ def validar_checksum(dados_rx):
     return calcular_checksum(dados_rx) == 0
 
 def empacotar_mensagem(tipo, seqnum, payload=""):
-    formato_cabecalho = "!BBh"
+    # Garante que números negativos (como -1) virem unsigned de 16 bits para a rede
+    seqnum_net = seqnum & 0xFFFF
+    
+    formato_cabecalho = "!BBH"
     if tipo in (HEL, BYE, ERR):
-        pct = struct.pack(formato_cabecalho, tipo, 0, seqnum)
+        pct = struct.pack(formato_cabecalho, tipo, 0, seqnum_net)
     else:
-        formato_longo = "!BBh8s"
+        formato_longo = "!BBH8s"
         payload_bytes = payload.ljust(8, ' ').encode('ascii')
-        pct = struct.pack(formato_longo, tipo, 0, seqnum, payload_bytes)
+        pct = struct.pack(formato_longo, tipo, 0, seqnum_net, payload_bytes)
         
     checksum_real = calcular_checksum(pct)
     
-    if tipo in (HEL, BYE, ERR):
-        return struct.pack(formato_cabecalho, tipo, checksum_real, seqnum)
-    else:
-        return struct.pack(formato_longo, tipo, checksum_real, seqnum, payload_bytes)
+    # Injeta o checksum real na posição 1
+    lista_bytes = list(pct)
+    lista_bytes[1] = checksum_real
+    return bytes(lista_bytes)
 
 def desempacotar_mensagem(dados_rx):
     tamanho = len(dados_rx)
     if tamanho == 4:
-        tipo, checksum, seqnum = struct.unpack("!BBh", dados_rx)
+        tipo, checksum, seqnum_unsigned = struct.unpack("!BBH", dados_rx)
+        seqnum = seqnum_unsigned if seqnum_unsigned <= 32767 else seqnum_unsigned - 65536
         return tipo, checksum, seqnum, ""
     elif tamanho == 12:
-        tipo, checksum, seqnum, payload_bytes = struct.unpack("!BBh8s", dados_rx)
+        tipo, checksum, seqnum_unsigned, payload_bytes = struct.unpack("!BBH8s", dados_rx)
+        seqnum = seqnum_unsigned if seqnum_unsigned <= 32767 else seqnum_unsigned - 65536
         return tipo, checksum, seqnum, payload_bytes.decode('ascii').strip()
     raise ValueError("Tamanho inválido")
 
@@ -47,8 +52,10 @@ def gerar_senha_aleatoria(tamanho):
 
 def avaliar_tentativa(senha_real, tentativa):
     resultado = ""
-    for i in range(len(tentativa)):
-        digito = tentativa[i]
+    # Garante que vamos comparar apenas até o tamanho real da senha (NA)
+    tentativa_truncada = tentativa[:len(senha_real)]
+    for i in range(len(tentativa_truncada)):
+        digito = tentativa_truncated = tentativa_truncada[i]
         if digito == senha_real[i]:
             resultado += "*"
         elif digito in senha_real:
@@ -106,13 +113,16 @@ def iniciar_servidor(porta, senha_arg, nt_max):
                     continue
                     
                 if seqnum == estado['seq_esperado']:
-                    # Validação de formato da tentativa (repetições ou tamanho)
-                    if len(payload) != tamanho_senha or len(set(payload)) != len(payload):
+                    # Trunca o palpite no tamanho real da senha esperado (NA)
+                    palpite_real = payload[:tamanho_senha]
+                    
+                    # Validação se tem tamanho menor ou dígitos repetidos
+                    if len(palpite_real) != tamanho_senha or len(set(palpite_real)) != len(palpite_real) or not palpite_real.isdigit():
                         pacote_err = empacotar_mensagem(ERR, seqnum)
                         sock.sendto(pacote_err, endereco_cliente)
                         continue
 
-                    resultado = avaliar_tentativa(senha_global, payload)
+                    resultado = avaliar_tentativa(senha_global, palpite_real)
                     estado['tentativas_restantes'] -= 1
                     estado['seq_esperado'] += 1
                     
@@ -122,6 +132,7 @@ def iniciar_servidor(porta, senha_arg, nt_max):
 
             elif tipo == BYE:
                 if endereco_cliente in clientes and not clientes[endereco_cliente]['finalizado']:
+                    # -1 vira 65535 automaticamente na função empacotar
                     pacote_resposta = empacotar_mensagem(RES, -1, senha_global)
                     sock.sendto(pacote_resposta, endereco_cliente)
                     
@@ -138,9 +149,4 @@ def iniciar_servidor(porta, senha_arg, nt_max):
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         sys.exit(1)
-        
-    porta_param = int(sys.argv[1])
-    senha_param = sys.argv[2]
-    nt_param = int(sys.argv[3])
-    
-    iniciar_servidor(porta_param, senha_param, nt_param)
+    iniciar_servidor(int(sys.argv[1]), sys.argv[2], int(sys.argv[3]))

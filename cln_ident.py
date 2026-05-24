@@ -1,4 +1,4 @@
-# Autores: [Seu Nome] e [Nome da Dupla]
+# Autores: Ronald Santos
 import sys
 import socket
 import struct
@@ -15,28 +15,29 @@ def validar_checksum(dados_rx):
     return calcular_checksum(dados_rx) == 0
 
 def empacotar_mensagem(tipo, seqnum, payload=""):
-    formato_cabecalho = "!BBh"
+    seqnum_net = seqnum & 0xFFFF
+    formato_cabecalho = "!BBH"
     if tipo in (HEL, BYE, ERR):
-        pct = struct.pack(formato_cabecalho, tipo, 0, seqnum)
+        pct = struct.pack(formato_cabecalho, tipo, 0, seqnum_net)
     else:
-        formato_longo = "!BBh8s"
+        formato_longo = "!BBH8s"
         payload_bytes = payload.ljust(8, ' ').encode('ascii')
-        pct = struct.pack(formato_longo, tipo, 0, seqnum, payload_bytes)
+        pct = struct.pack(formato_longo, tipo, 0, seqnum_net, payload_bytes)
         
     checksum_real = calcular_checksum(pct)
-    
-    if tipo in (HEL, BYE, ERR):
-        return struct.pack(formato_cabecalho, tipo, checksum_real, seqnum)
-    else:
-        return struct.pack(formato_longo, tipo, checksum_real, seqnum, payload_bytes)
+    lista_bytes = list(pct)
+    lista_bytes[1] = checksum_real
+    return bytes(lista_bytes)
 
 def desempacotar_mensagem(dados_rx):
     tamanho = len(dados_rx)
     if tamanho == 4:
-        tipo, checksum, seqnum = struct.unpack("!BBh", dados_rx)
+        tipo, checksum, seqnum_unsigned = struct.unpack("!BBH", dados_rx)
+        seqnum = seqnum_unsigned if seqnum_unsigned <= 32767 else seqnum_unsigned - 65536
         return tipo, checksum, seqnum, ""
     elif tamanho == 12:
-        tipo, checksum, seqnum, payload_bytes = struct.unpack("!BBh8s", dados_rx)
+        tipo, checksum, seqnum_unsigned, payload_bytes = struct.unpack("!BBH8s", dados_rx)
+        seqnum = seqnum_unsigned if seqnum_unsigned <= 32767 else seqnum_unsigned - 65536
         return tipo, checksum, seqnum, payload_bytes.decode('ascii').strip()
     raise ValueError("Tamanho inválido")
 
