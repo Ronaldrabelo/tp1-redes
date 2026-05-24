@@ -98,6 +98,8 @@ if __name__ == "__main__":
         elif tipo_rx == ERR:
             if seqnum_rx > 0:
                 print(f"RETRY {seqnum_rx}")
+                # CORREÇÃO: Incrementa o seqnum_try mesmo quando der erro para a contagem acompanhar o servidor
+                seqnum_try += 1
             else:
                 print("ERRO")
                 sys.exit(0)

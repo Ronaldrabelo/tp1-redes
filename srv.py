@@ -16,7 +16,6 @@ def validar_checksum(dados_rx):
     return calcular_checksum(dados_rx) == 0
 
 def empacotar_mensagem(tipo, seqnum, payload=""):
-    # Garante que números negativos (como -1) virem unsigned de 16 bits para a rede
     seqnum_net = seqnum & 0xFFFF
     
     formato_cabecalho = "!BBH"
@@ -28,8 +27,6 @@ def empacotar_mensagem(tipo, seqnum, payload=""):
         pct = struct.pack(formato_longo, tipo, 0, seqnum_net, payload_bytes)
         
     checksum_real = calcular_checksum(pct)
-    
-    # Injeta o checksum real na posição 1
     lista_bytes = list(pct)
     lista_bytes[1] = checksum_real
     return bytes(lista_bytes)
@@ -52,10 +49,9 @@ def gerar_senha_aleatoria(tamanho):
 
 def avaliar_tentativa(senha_real, tentativa):
     resultado = ""
-    # Garante que vamos comparar apenas até o tamanho real da senha (NA)
     tentativa_truncada = tentativa[:len(senha_real)]
     for i in range(len(tentativa_truncada)):
-        digito = tentativa_truncated = tentativa_truncada[i]
+        digito = tentativa_truncada[i]
         if digito == senha_real[i]:
             resultado += "*"
         elif digito in senha_real:
@@ -113,13 +109,14 @@ def iniciar_servidor(porta, senha_arg, nt_max):
                     continue
                     
                 if seqnum == estado['seq_esperado']:
-                    # Trunca o palpite no tamanho real da senha esperado (NA)
                     palpite_real = payload[:tamanho_senha]
                     
-                    # Validação se tem tamanho menor ou dígitos repetidos
                     if len(palpite_real) != tamanho_senha or len(set(palpite_real)) != len(palpite_real) or not palpite_real.isdigit():
                         pacote_err = empacotar_mensagem(ERR, seqnum)
                         sock.sendto(pacote_err, endereco_cliente)
+                        # CORREÇÃO: Avança o seqnum mesmo no erro para manter sincronia e salva para stop-and-wait
+                        estado['seq_esperado'] += 1
+                        estado['ultima_resposta'] = pacote_err
                         continue
 
                     resultado = avaliar_tentativa(senha_global, palpite_real)
@@ -131,13 +128,18 @@ def iniciar_servidor(porta, senha_arg, nt_max):
                     estado['ultima_resposta'] = pacote_resposta
 
             elif tipo == BYE:
-                if endereco_cliente in clientes and not clientes[endereco_cliente]['finalizado']:
-                    # -1 vira 65535 automaticamente na função empacotar
-                    pacote_resposta = empacotar_mensagem(RES, -1, senha_global)
-                    sock.sendto(pacote_resposta, endereco_cliente)
-                    
-                    clientes[endereco_cliente]['finalizado'] = True
-                    clientes_finalizados += 1
+                if endereco_cliente in clientes:
+                    estado = clientes[endereco_cliente]
+                    if not estado['finalizado']:
+                        pacote_resposta = empacotar_mensagem(RES, -1, senha_global)
+                        sock.sendto(pacote_resposta, endereco_cliente)
+                        
+                        estado['finalizado'] = True
+                        estado['ultima_resposta'] = pacote_resposta
+                        clientes_finalizados += 1
+                    else:
+                        # CORREÇÃO: Se o BYE vier duplicado, retransmite a resposta do BYE
+                        sock.sendto(estado['ultima_resposta'], endereco_cliente)
             
         except KeyboardInterrupt:
             break
